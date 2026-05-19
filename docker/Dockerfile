@@ -89,5 +89,8 @@ RUN aria2c -x 8 -s 8 \
 WORKDIR /opt/comfyui
 EXPOSE 8188
 
-# Default command (overridden by RunPod start_ssh anyway)
-CMD ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188"]
+# IMPORTANT : No CMD/ENTRYPOINT. We need the RunPod default init to handle sshd
+# (so start_ssh=True can inject PUBLIC_KEY). ComfyUI server itself is started
+# AFTER sshd is up, by comfyui_pod_client.start_comfyui() via SSH.
+# If we set CMD ["python", "main.py", ...] here, ComfyUI takes PID 1 and sshd
+# never starts → pod looks RUNNING but SSH connection refused forever.
