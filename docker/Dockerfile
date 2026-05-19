@@ -85,12 +85,32 @@ RUN aria2c -x 8 -s 8 \
     -o face_yolov8m.pt -d /opt/comfyui/models/ultralytics/bbox \
     "https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8m.pt"
 
+# === sshd setup (must be in image, RunPod base entrypoint can be stripped) ===
+RUN apt-get update -qq && \
+    apt-get install -qq -y openssh-server && \
+    mkdir -p /var/run/sshd /root/.ssh && \
+    chmod 700 /root/.ssh && \
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    rm -rf /var/lib/apt/lists/*
+
+# Entrypoint : inject PUBLIC_KEY (from RunPod env var) + start sshd in foreground.
+# ComfyUI is launched separately via SSH by comfyui_pod_client.start_comfyui().
+RUN echo '#!/bin/bash\n\
+set -e\n\
+if [ -n "$PUBLIC_KEY" ]; then\n\
+    echo "$PUBLIC_KEY" > /root/.ssh/authorized_keys\n\
+    chmod 600 /root/.ssh/authorized_keys\n\
+    echo "✓ injected PUBLIC_KEY into authorized_keys"\n\
+fi\n\
+# Generate host keys if missing (first boot)\n\
+ssh-keygen -A 2>/dev/null || true\n\
+# Run sshd in foreground (PID 1)\n\
+exec /usr/sbin/sshd -D -e\n\
+' > /entrypoint.sh && chmod +x /entrypoint.sh
+
 # === Working dir + entry ===
 WORKDIR /opt/comfyui
-EXPOSE 8188
+EXPOSE 8188 22
 
-# IMPORTANT : No CMD/ENTRYPOINT. We need the RunPod default init to handle sshd
-# (so start_ssh=True can inject PUBLIC_KEY). ComfyUI server itself is started
-# AFTER sshd is up, by comfyui_pod_client.start_comfyui() via SSH.
-# If we set CMD ["python", "main.py", ...] here, ComfyUI takes PID 1 and sshd
-# never starts → pod looks RUNNING but SSH connection refused forever.
+ENTRYPOINT ["/entrypoint.sh"]
